@@ -1,0 +1,191 @@
+[
+  {
+    "thought": "Start with the alert: what is failing and how badly?",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_alert",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Pull error rate, latency, pool, disk and db numbers for the last 30s to see which subsystem looks off.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_metrics",
+      "args": {
+        "window_s": 30
+      }
+    }
+  },
+  {
+    "thought": "Pull the recent ERROR lines. If more than one cause is active, they should both show up.",
+    "action": {
+      "type": "tool_call",
+      "tool": "tail_logs",
+      "args": {
+        "service": "shopnode",
+        "pattern": "ERROR",
+        "n": 30
+      }
+    }
+  },
+  {
+    "thought": "The ERROR lines show TWO different failures mixed together: 'connection refused db-prod-02:5432 while opening checkout transaction' and 'OSError: [Errno 28] No space left on device'. One cause doesn't explain both, so I'm testing each. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.5,
+          "status": "open",
+          "evidence_for": [
+            "connection refused db-prod-02:5432 while opening checkout transaction"
+          ],
+          "evidence_against": [],
+          "next_test": "get_config_diff"
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.5,
+          "status": "open",
+          "evidence_for": [
+            "OSError: [Errno 28] No space left on device"
+          ],
+          "evidence_against": [],
+          "next_test": "check_connectivity disk"
+        },
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.1,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "Compare pool usage with its max"
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.1,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "tail_logs for payment-gw"
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Test the disk hypothesis directly.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "disk"
+      }
+    }
+  },
+  {
+    "thought": "Test the db connection.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "db"
+      }
+    }
+  },
+  {
+    "thought": "Check for a recent config change behind the refused connections.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_config_diff",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Disk write test fails, the db refuses connections, and v4 changed db_host to db-prod-02. These are two independent causes. No QueuePool errors and no payment-gw timeouts appear. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.9,
+          "status": "confirmed",
+          "evidence_for": [
+            "connection refused db-prod-02:5432 while opening checkout transaction",
+            "config v4 diff: - db_host=db-prod-01 / + db_host=db-prod-02"
+          ],
+          "evidence_against": [],
+          "next_test": "Roll back to v3"
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.9,
+          "status": "confirmed",
+          "evidence_for": [
+            "OSError: [Errno 28] No space left on device",
+            "check_connectivity disk: write test failed"
+          ],
+          "evidence_against": [],
+          "next_test": "Rotate logs"
+        },
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.03,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "no QueuePool errors; db_pool_used is low"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.03,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "no payment-gw timeout lines"
+          ],
+          "next_test": ""
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Order matters. Rotate logs first: it is the lowest-risk fix and a full disk would block the rollback's own writes. Config rollback comes second.",
+    "action": {
+      "type": "propose_fix",
+      "fix_name": "rotate_logs",
+      "target_hypothesis": "h3",
+      "expected_effect": "Disk usage returns to normal. Errors will NOT fully stop because the config problem remains",
+      "rollback_plan": "The archived log stays as shopnode.log.1",
+      "confidence": 0.92
+    }
+  },
+  {
+    "thought": "Verification after rotate_logs failed as expected: the disk errors are gone but 'connection refused db-prod-02' still appears, which confirms the second cause. Applying the config rollback.",
+    "action": {
+      "type": "propose_fix",
+      "fix_name": "rollback_config",
+      "target_hypothesis": "h1",
+      "expected_effect": "db_host returns to db-prod-01 and checkout fully recovers",
+      "rollback_plan": "Re-apply config v4 from config history if needed",
+      "confidence": 0.93
+    }
+  },
+  {
+    "thought": "Verification passed after both fixes.",
+    "action": {
+      "type": "conclude",
+      "summary": "Two simultaneous faults: a full disk and a bad v4 config. Rotated logs first, then rolled back the config."
+    }
+  }
+]

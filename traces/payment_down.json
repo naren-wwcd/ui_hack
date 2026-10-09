@@ -1,0 +1,196 @@
+[
+  {
+    "thought": "Start with the alert: what is failing and how badly?",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_alert",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Pull error rate, latency, pool, disk and db numbers for the last 30s to see which subsystem looks off.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_metrics",
+      "args": {
+        "window_s": 30
+      }
+    }
+  },
+  {
+    "thought": "5xx on /checkout. Candidates and discriminating tests below. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.25,
+          "status": "open",
+          "evidence_for": [
+            "checkout includes a payment call"
+          ],
+          "evidence_against": [],
+          "next_test": "tail_logs for payment-gw timeouts"
+        },
+        {
+          "id": "h5",
+          "cause": "Database server is hung or unresponsive",
+          "confidence": 0.2,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "check_connectivity db"
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.2,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "check_connectivity disk"
+        },
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.2,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "get_config_diff"
+        },
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.15,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "Compare pool usage with its max"
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Look for timeout lines that name an upstream dependency.",
+    "action": {
+      "type": "tool_call",
+      "tool": "tail_logs",
+      "args": {
+        "service": "shopnode",
+        "pattern": "payment|timeout",
+        "n": 15
+      }
+    }
+  },
+  {
+    "thought": "Confirm the payment dependency directly.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "payment"
+      }
+    }
+  },
+  {
+    "thought": "Disconfirming test: check that the database is fine.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "db"
+      }
+    }
+  },
+  {
+    "thought": "Disconfirming test: check that the disk is fine.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "disk"
+      }
+    }
+  },
+  {
+    "thought": "The log shows 'upstream timeout payment-gw after 3000ms (POST /v1/charge)'. Only the payment check fails; db and disk both pass. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.92,
+          "status": "confirmed",
+          "evidence_for": [
+            "upstream timeout payment-gw after 3000ms (POST /v1/charge)",
+            "check_connectivity payment: timeout after 3000ms to payment-gw"
+          ],
+          "evidence_against": [],
+          "next_test": ""
+        },
+        {
+          "id": "h5",
+          "cause": "Database server is hung or unresponsive",
+          "confidence": 0.02,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "check_connectivity db is ok"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.02,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "check_connectivity disk is ok"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.02,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "errors name payment-gw, not the database"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.02,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "no QueuePool errors"
+          ],
+          "next_test": ""
+        }
+      ]
+    }
+  },
+  {
+    "thought": "The fault is in a downstream dependency we don't own. No catalog fix (rotate_logs, restart_worker, resize_pool, rollback_config, restart_db) can repair it, and running one anyway would risk making things worse. Escalate with the diagnosis.",
+    "action": {
+      "type": "escalate",
+      "reason": "Root cause is a downstream payment gateway outage; no safe fix exists in the remediation catalog",
+      "diagnosis_summary": "Checkout fails because payment-gw is timing out. Database, disk, pool and config are all healthy.",
+      "evidence": [
+        "upstream timeout payment-gw after 3000ms (POST /v1/charge)",
+        "check_connectivity payment: timeout after 3000ms to payment-gw",
+        "check_connectivity db: ok",
+        "check_connectivity disk: ok",
+        "Recommended next step: contact the payment-gw owner and enable the fallback or maintenance page"
+      ]
+    }
+  }
+]

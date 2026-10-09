@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Update Incident · ShopNode Service Desk{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Update Incident INC{{ "%07d"|format(incident.id) }}</h2>
+  <p><strong>{{ incident.short_description }}</strong></p>
+  <p class="muted">Category: {{ incident.category }} · Priority: {{ incident.priority }}</p>
+  <div class="panel">
+    <h3>Diagnosis</h3><pre>{{ incident.diagnosis }}</pre>
+    <h3>Evidence</h3><pre id="evidence">{{ incident.evidence }}</pre>
+    <h3>Work notes so far</h3><pre>{{ incident.work_notes }}</pre>
+  </div>
+  <form method="post" action="/incident/{{ incident.id }}/update">
+    <label for="work_notes">Add work notes</label>
+    <textarea id="work_notes" name="work_notes"></textarea>
+    <label for="state">State</label>
+    <select id="state" name="state">
+      {% for state in ["New", "In Progress", "On Hold", "Resolved", "Escalated", "Closed"] %}
+      <option value="{{ state }}" {% if incident.state == state %}selected{% endif %}>{{ state }}</option>
+      {% endfor %}
+    </select>
+    <button id="submit" type="submit">Update Record</button>
+    <a class="button" href="/incident/{{ incident.id }}/resolve">Resolve / Close</a>
+  </form>
+</section>
+{% endblock %}

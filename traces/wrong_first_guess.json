@@ -1,0 +1,201 @@
+[
+  {
+    "thought": "Start with the alert: what is failing and how badly?",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_alert",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Pull error rate, latency, pool, disk and db numbers for the last 30s to see which subsystem looks off.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_metrics",
+      "args": {
+        "window_s": 30
+      }
+    }
+  },
+  {
+    "thought": "Read the actual error lines first.",
+    "action": {
+      "type": "tool_call",
+      "tool": "tail_logs",
+      "args": {
+        "service": "shopnode",
+        "pattern": "ERROR",
+        "n": 20
+      }
+    }
+  },
+  {
+    "thought": "The errors say 'connection refused db-prod-02:5432 while opening checkout transaction'. A worker holding stale sockets after a network blip could produce this, and a restart is cheap, so that's my leading guess, but it's not certain. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h6",
+          "cause": "Worker is holding stale DB connections after a network blip",
+          "confidence": 0.5,
+          "status": "open",
+          "evidence_for": [
+            "connection refused db-prod-02:5432 while opening checkout transaction"
+          ],
+          "evidence_against": [
+            "pool is not exhausted"
+          ],
+          "next_test": "Restart the worker and see whether errors stop"
+        },
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.3,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "get_config_diff"
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.1,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "check_connectivity disk"
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.05,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "tail_logs for payment-gw"
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Disconfirming test: rule out a full disk, which would also fail checkout.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "disk"
+      }
+    }
+  },
+  {
+    "thought": "Disk is fine. Restarting the worker is low risk and quick, so I'll try it before digging into config. Confidence is only moderate.",
+    "action": {
+      "type": "propose_fix",
+      "fix_name": "restart_worker",
+      "target_hypothesis": "h6",
+      "expected_effect": "Stale connections are dropped and errors stop",
+      "rollback_plan": "Nothing to undo",
+      "confidence": 0.65
+    }
+  },
+  {
+    "thought": "The restart changed nothing: error_rate is still high and 'connection refused db-prod-02:5432 while opening checkout transaction' keeps appearing, so the stale-connection guess was wrong. A refused connection to a specific host points at configuration. I'll check the config history.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h6",
+          "cause": "Worker is holding stale DB connections after a network blip",
+          "confidence": 0.05,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "restart_worker did not change the error rate",
+            "the same refused-connection errors continue"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.6,
+          "status": "open",
+          "evidence_for": [
+            "connection refused db-prod-02:5432 while opening checkout transaction",
+            "the restart ruled out a transient worker problem"
+          ],
+          "evidence_against": [],
+          "next_test": "get_config_diff"
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.02,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "disk write test passed"
+          ],
+          "next_test": ""
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Look for the config change.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_config_diff",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Config v4 by deploy-bot changed db_host from db-prod-01 to db-prod-02, which matches the refused host.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.94,
+          "status": "confirmed",
+          "evidence_for": [
+            "connection refused db-prod-02:5432 while opening checkout transaction",
+            "config v4 diff: - db_host=db-prod-01 / + db_host=db-prod-02"
+          ],
+          "evidence_against": [],
+          "next_test": "Roll back to v3"
+        },
+        {
+          "id": "h6",
+          "cause": "Worker is holding stale DB connections after a network blip",
+          "confidence": 0.02,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "restart_worker did not help"
+          ],
+          "next_test": ""
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Different fix this time, as the previous one failed. Rollback undoes the one change that matches the evidence.",
+    "action": {
+      "type": "propose_fix",
+      "fix_name": "rollback_config",
+      "target_hypothesis": "h1",
+      "expected_effect": "db_host returns to db-prod-01 and checkout recovers",
+      "rollback_plan": "Re-apply config v4 from config history if needed",
+      "confidence": 0.93
+    }
+  },
+  {
+    "thought": "Verification passed after the config rollback.",
+    "action": {
+      "type": "conclude",
+      "summary": "The first guess (stale worker connections) was wrong. After it failed verification, the agent replanned, found the v4 db_host change and rolled it back."
+    }
+  }
+]

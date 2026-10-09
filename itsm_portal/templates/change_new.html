@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Change Request · ShopNode Service Desk{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>New Change Request</h2>
+  <p class="muted">Submitting this sandbox form also creates an on-call pager entry.</p>
+  <form method="post" action="/change/new">
+    <label for="portal_incident_id">Related incident</label>
+    <select id="portal_incident_id" name="portal_incident_id">
+      <option value="">No linked incident</option>
+      {% for incident in incidents %}
+      <option value="{{ incident.id }}">INC{{ "%07d"|format(incident.id) }} · {{ incident.short_description }}</option>
+      {% endfor %}
+    </select>
+    <label for="short_description">Short description</label>
+    <input id="short_description" name="short_description" required>
+    <label for="justification">Justification / on-call notes</label>
+    <textarea id="justification" name="justification" required></textarea>
+    <button id="submit" type="submit">Submit Change and Page</button>
+  </form>
+</section>
+{% endblock %}

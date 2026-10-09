@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Resolve Incident · ShopNode Service Desk{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Resolve Incident INC{{ "%07d"|format(incident.id) }}</h2>
+  <p><strong>{{ incident.short_description }}</strong></p>
+  <p class="muted">Closing this record updates only the local ITSM sandbox.</p>
+  <form method="post" action="/incident/{{ incident.id }}/resolve">
+    <label for="resolution_code">Resolution code</label>
+    <select id="resolution_code" name="resolution_code">
+      <option>Solved (Work Around)</option>
+      <option>Solved (Permanently)</option>
+      <option>Closed - No Action</option>
+    </select>
+    <label for="resolution_notes">Resolution notes</label>
+    <textarea id="resolution_notes" name="resolution_notes" required></textarea>
+    <button id="submit" type="submit">Close Incident</button>
+    <a class="button" href="/incident/{{ incident.id }}/update">Cancel</a>
+  </form>
+</section>
+{% endblock %}

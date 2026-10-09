@@ -1,0 +1,202 @@
+[
+  {
+    "thought": "Start with the alert: what is failing and how badly?",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_alert",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Pull error rate, latency, pool, disk and db numbers for the last 30s to see which subsystem looks off.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_metrics",
+      "args": {
+        "window_s": 30
+      }
+    }
+  },
+  {
+    "thought": "5xx on /checkout fits many causes, so I'm listing candidates with the test that separates them. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.3,
+          "status": "open",
+          "evidence_for": [
+            "error_rate is high on /checkout"
+          ],
+          "evidence_against": [],
+          "next_test": "get_config_diff"
+        },
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.25,
+          "status": "open",
+          "evidence_for": [
+            "error_rate is high on /checkout"
+          ],
+          "evidence_against": [],
+          "next_test": "Compare db_pool_used with db_pool_max"
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.15,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "check_connectivity disk"
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.15,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "tail_logs for payment-gw timeouts"
+        },
+        {
+          "id": "h5",
+          "cause": "Database server is hung or unresponsive",
+          "confidence": 0.15,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "check_connectivity db"
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Read the actual error lines to see what the failing requests complain about.",
+    "action": {
+      "type": "tool_call",
+      "tool": "tail_logs",
+      "args": {
+        "service": "shopnode",
+        "pattern": "ERROR",
+        "n": 20
+      }
+    }
+  },
+  {
+    "thought": "Disconfirming test: if the disk is full, writes fail with ENOSPC. The ERROR lines don't mention it, but verify directly.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "disk"
+      }
+    }
+  },
+  {
+    "thought": "The errors name a database host. Test the db connection itself.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "db"
+      }
+    }
+  },
+  {
+    "thought": "The db refuses connections rather than timing out. Check whether the config changed recently.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_config_diff",
+      "args": {}
+    }
+  },
+  {
+    "thought": "The log says 'connection refused db-prod-02:5432 while opening checkout transaction' and the config diff shows db_host changed from db-prod-01 to db-prod-02 in v4 by deploy-bot. Pool usage in the metrics is far below db_pool_max with no QueuePool errors, and the disk write test passed. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.93,
+          "status": "confirmed",
+          "evidence_for": [
+            "connection refused db-prod-02:5432 while opening checkout transaction",
+            "config v4 diff: - db_host=db-prod-01 / + db_host=db-prod-02",
+            "check_connectivity db: connection refused db-prod-02:5432"
+          ],
+          "evidence_against": [],
+          "next_test": "Roll back to v3"
+        },
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.04,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "db_pool_used is far below db_pool_max",
+            "no QueuePool limit errors in the log"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.02,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "check_connectivity disk reports ok",
+            "no 'No space left on device' lines"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.03,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "error lines name db-prod-02, not payment-gw"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h5",
+          "cause": "Database server is hung or unresponsive",
+          "confidence": 0.05,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "host db-prod-02 refuses quickly (not a hang); the previous host was fine"
+          ],
+          "next_test": ""
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Rolling back to v3 undoes the single change that matches the evidence. It is medium risk and reversible, and the dry run can confirm v3 exists.",
+    "action": {
+      "type": "propose_fix",
+      "fix_name": "rollback_config",
+      "target_hypothesis": "h1",
+      "expected_effect": "db_host returns to db-prod-01, checkout 5xx stop and error_rate drops below 2%",
+      "rollback_plan": "Re-apply config v4 (db_host=db-prod-02) from config history if the rollback makes things worse",
+      "confidence": 0.92
+    }
+  },
+  {
+    "thought": "Verification passed after the rollback.",
+    "action": {
+      "type": "conclude",
+      "summary": "Config v4 pointed db_host at db-prod-02, which refuses connections. Rolled back to v3 and checkout recovered."
+    }
+  }
+]

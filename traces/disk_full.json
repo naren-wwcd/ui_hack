@@ -1,0 +1,190 @@
+[
+  {
+    "thought": "Start with the alert: what is failing and how badly?",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_alert",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Pull error rate, latency, pool, disk and db numbers for the last 30s to see which subsystem looks off.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_metrics",
+      "args": {
+        "window_s": 30
+      }
+    }
+  },
+  {
+    "thought": "5xx on /checkout again, so candidates first. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.3,
+          "status": "open",
+          "evidence_for": [
+            "error_rate is high"
+          ],
+          "evidence_against": [],
+          "next_test": "tail_logs for ENOSPC"
+        },
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.2,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "get_config_diff"
+        },
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.2,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "Compare pool usage with its max"
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.15,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "check_connectivity payment"
+        },
+        {
+          "id": "h5",
+          "cause": "Database server is hung or unresponsive",
+          "confidence": 0.15,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "check_connectivity db"
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Look for disk or write-failure lines.",
+    "action": {
+      "type": "tool_call",
+      "tool": "tail_logs",
+      "args": {
+        "service": "shopnode",
+        "pattern": "No space|disk",
+        "n": 15
+      }
+    }
+  },
+  {
+    "thought": "Confirm with a direct write test on the disk.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "disk"
+      }
+    }
+  },
+  {
+    "thought": "Disconfirming test: if the database is the problem its connectivity check should fail. It shouldn't here.",
+    "action": {
+      "type": "tool_call",
+      "tool": "check_connectivity",
+      "args": {
+        "target": "db"
+      }
+    }
+  },
+  {
+    "thought": "The log shows 'OSError: [Errno 28] No space left on device' and 'disk usage 100% on /var/log, writes failing', and the disk write test fails. The db connection check passes. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.94,
+          "status": "confirmed",
+          "evidence_for": [
+            "OSError: [Errno 28] No space left on device",
+            "disk usage 100% on /var/log, writes failing",
+            "check_connectivity disk: write test failed"
+          ],
+          "evidence_against": [],
+          "next_test": "Rotate logs"
+        },
+        {
+          "id": "h5",
+          "cause": "Database server is hung or unresponsive",
+          "confidence": 0.03,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "check_connectivity db is ok and fast"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.03,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "errors are ENOSPC, not connection refused"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.03,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "no QueuePool errors; db_pool_used is low"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.03,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "no payment-gw timeout lines"
+          ],
+          "next_test": ""
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Rotating and archiving logs frees the disk. It's low risk and nothing is deleted.",
+    "action": {
+      "type": "propose_fix",
+      "fix_name": "rotate_logs",
+      "target_hypothesis": "h3",
+      "expected_effect": "disk_used_pct falls back to normal, writes succeed and checkout recovers",
+      "rollback_plan": "The archived log stays as shopnode.log.1, so nothing is lost",
+      "confidence": 0.93
+    }
+  },
+  {
+    "thought": "Verification passed after log rotation.",
+    "action": {
+      "type": "conclude",
+      "summary": "The log volume hit 100% and writes failed with ENOSPC. Rotating logs freed the space and checkout recovered."
+    }
+  }
+]

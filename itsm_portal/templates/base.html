@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ShopNode Service Desk{% endblock %}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --navy: #17365d;
+      --navy-dark: #102744;
+      --border: #aab5c2;
+      --paper: #f4f6f8;
+      --panel: #fff;
+      --text: #202a35;
+      --muted: #647383;
+      --blue: #1769aa;
+      --red: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--text);
+      font: 14px Arial, Helvetica, sans-serif;
+    }
+    header {
+      background: var(--navy);
+      color: white;
+      border-bottom: 4px solid #d3a62c;
+      padding: 14px 24px;
+    }
+    header .topline { display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+    header small { display: block; margin-top: 5px; opacity: .78; }
+    .sandbox {
+      color: #fff;
+      background: #a93226;
+      border: 1px solid #f4c7c3;
+      border-radius: 3px;
+      padding: 5px 9px;
+      font-size: 11px;
+      font-weight: bold;
+      letter-spacing: .8px;
+    }
+    nav { background: var(--navy-dark); padding: 9px 24px; }
+    nav a { color: #f7f9fb; margin-right: 22px; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    main { max-width: 1100px; margin: 22px auto; padding: 0 18px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 2px #0001;
+      padding: 18px;
+      margin-bottom: 18px;
+    }
+    h2 { font-size: 19px; color: var(--navy); margin: 0 0 16px; }
+    h3 { font-size: 15px; color: var(--navy); }
+    label { display: block; font-weight: bold; margin: 13px 0 5px; }
+    input, select, textarea {
+      font: inherit;
+      border: 1px solid #8391a0;
+      border-radius: 2px;
+      padding: 8px;
+      width: 100%;
+      background: white;
+    }
+    textarea { min-height: 90px; resize: vertical; }
+    button, .button {
+      display: inline-block;
+      color: white;
+      background: var(--blue);
+      border: 1px solid #0b4e84;
+      border-radius: 2px;
+      padding: 8px 14px;
+      margin-top: 15px;
+      cursor: pointer;
+      text-decoration: none;
+      font: inherit;
+    }
+    button:hover, .button:hover { background: #0b4e84; }
+    table { width: 100%; border-collapse: collapse; background: white; }
+    th, td { border: 1px solid #c6ced6; padding: 9px; text-align: left; vertical-align: top; }
+    th { background: #e6ebf0; color: #263c52; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    .muted { color: var(--muted); }
+    .error { color: var(--red); font-weight: bold; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .actions { margin: 8px 0 14px; }
+    .actions a { margin-right: 10px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+    footer { color: var(--muted); font-size: 12px; padding: 20px 24px; text-align: center; }
+    @media (max-width: 650px) {
+      .row { grid-template-columns: 1fr; }
+      header .topline { align-items: flex-start; gap: 12px; }
+      nav a { display: inline-block; margin: 4px 12px 4px 0; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="topline">
+    <div>
+      <h1>ShopNode Service Desk</h1>
+      <small>Legacy Operations Portal · Local demonstration environment</small>
+    </div>
+    <span class="sandbox">SANDBOX</span>
+  </div>
+</header>
+{% if request.session.get("authenticated") %}
+<nav>
+  <a href="/incidents">Incidents</a>
+  <a href="/incident/new">New Incident</a>
+  <a href="/change/new">Change Request</a>
+  <a href="/pager">On-Call Pager</a>
+  <a href="/logout">Sign out</a>
+</nav>
+{% endif %}
+<main>
+  {% block content %}{% endblock %}
+</main>
+<footer>AutoHeal hackathon prototype · SANDBOX only · No production systems are connected</footer>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}On-Call Pager · ShopNode Service Desk{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>On-Call Pager</h2>
+  <p class="muted">Mock notification records for the local SANDBOX.</p>
+  {% if entries %}
+  <table>
+    <thead><tr><th>Time</th><th>Message</th><th>Incident</th><th>Change</th></tr></thead>
+    <tbody>
+    {% for entry in entries %}
+      <tr>
+        <td>{{ entry.created_at }}</td>
+        <td>{{ entry.message }}</td>
+        <td>{{ entry.incident_description or "—" }}</td>
+        <td>{{ entry.change_description or "—" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No on-call pages have been recorded.</p>
+  {% endif %}
+  <a class="button" href="/change/new">Create Change / Page</a>
+</section>
+{% endblock %}

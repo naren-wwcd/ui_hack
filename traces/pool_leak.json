@@ -1,0 +1,187 @@
+[
+  {
+    "thought": "Start with the alert: what is failing and how badly?",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_alert",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Pull error rate, latency, pool, disk and db numbers for the last 30s to see which subsystem looks off.",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_metrics",
+      "args": {
+        "window_s": 30
+      }
+    }
+  },
+  {
+    "thought": "Several causes fit 5xx on /checkout. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.35,
+          "status": "open",
+          "evidence_for": [
+            "error_rate and p95 are elevated"
+          ],
+          "evidence_against": [],
+          "next_test": "tail_logs for pool messages"
+        },
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.25,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "get_config_diff"
+        },
+        {
+          "id": "h5",
+          "cause": "Database server is hung or unresponsive",
+          "confidence": 0.15,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "db_status"
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.1,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "check metrics for disk_used_pct"
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.15,
+          "status": "open",
+          "evidence_for": [],
+          "evidence_against": [],
+          "next_test": "tail_logs for payment-gw"
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Look for pool-related lines; a leak should show usage climbing before the failures.",
+    "action": {
+      "type": "tool_call",
+      "tool": "tail_logs",
+      "args": {
+        "service": "shopnode",
+        "pattern": "pool|QueuePool",
+        "n": 15
+      }
+    }
+  },
+  {
+    "thought": "Is the database itself healthy? If it answers fast, the failure is on the app side.",
+    "action": {
+      "type": "tool_call",
+      "tool": "db_status",
+      "args": {}
+    }
+  },
+  {
+    "thought": "Disconfirming test for the config hypothesis: did anything change on the database side recently?",
+    "action": {
+      "type": "tool_call",
+      "tool": "get_config_diff",
+      "args": {}
+    }
+  },
+  {
+    "thought": "The log shows 'db pool usage' climbing and then 'QueuePool limit of size 10 overflow 0 reached, connection timed out'. The db is reachable and fast, and the newest config (v3) only changed payment_url. The cache-miss, deprecated /v1/cart and slow /reports lines appear in every window and don't line up with the 5xx errors, so I'm ignoring them.",
+    "action": {
+      "type": "update_hypotheses",
+      "hypotheses": [
+        {
+          "id": "h2",
+          "cause": "DB connection pool exhausted by leaked connections",
+          "confidence": 0.9,
+          "status": "confirmed",
+          "evidence_for": [
+            "QueuePool limit of size 10 overflow 0 reached, connection timed out",
+            "db pool usage climbing toward db_pool_max before errors began",
+            "db_status: the database answers normally"
+          ],
+          "evidence_against": [],
+          "next_test": "Restart the worker to release leaked connections"
+        },
+        {
+          "id": "h1",
+          "cause": "A recent configuration change broke the database connection",
+          "confidence": 0.05,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "active config is v3, which only changed payment_url",
+            "db_host is unchanged"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h5",
+          "cause": "Database server is hung or unresponsive",
+          "confidence": 0.04,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "db_status and connect latency are normal"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h3",
+          "cause": "Disk is full so writes fail",
+          "confidence": 0.02,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "disk_used_pct is normal in get_metrics"
+          ],
+          "next_test": ""
+        },
+        {
+          "id": "h4",
+          "cause": "Downstream payment gateway is failing",
+          "confidence": 0.04,
+          "status": "rejected",
+          "evidence_for": [],
+          "evidence_against": [
+            "errors are QueuePool timeouts, not payment-gw timeouts"
+          ],
+          "next_test": ""
+        }
+      ]
+    }
+  },
+  {
+    "thought": "Leaked connections are held by the worker process, so restarting the worker releases them. Low risk. resize_pool would only give the leak more room to fill, so it's a decoy.",
+    "action": {
+      "type": "propose_fix",
+      "fix_name": "restart_worker",
+      "target_hypothesis": "h2",
+      "expected_effect": "Pool drains to its baseline, QueuePool errors stop and latency returns to normal",
+      "rollback_plan": "Nothing to undo: the worker restarts and reconnects. If the pool fills again quickly, escalate for a code fix",
+      "confidence": 0.88
+    }
+  },
+  {
+    "thought": "Verification passed after the worker restart.",
+    "action": {
+      "type": "conclude",
+      "summary": "The worker leaked DB connections until QueuePool was exhausted. Restarting the worker released them."
+    }
+  }
+]

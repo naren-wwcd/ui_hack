@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Incidents · ShopNode Service Desk{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Incident Queue</h2>
+  <p class="muted">Signed in as {{ username }}. Records are stored in the local ITSM sandbox.</p>
+  <div class="actions"><a class="button" href="/incident/new">Create Incident</a></div>
+  {% if incidents %}
+  <table>
+    <thead>
+      <tr><th>Number</th><th>Description</th><th>Category</th><th>Priority</th><th>State</th><th>Updated</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+    {% for item in incidents %}
+      <tr data-portal-id="{{ item.id }}" data-source-id="{{ item.source_incident_id or '' }}">
+        <td>INC{{ "%07d"|format(item.id) }}</td>
+        <td>{{ item.short_description }}</td>
+        <td>{{ item.category }}</td>
+        <td>{{ item.priority }}</td>
+        <td>{{ item.state }}</td>
+        <td>{{ item.updated_at }}</td>
+        <td>
+          <a class="update-link" href="/incident/{{ item.id }}/update">Update</a>
+          · <a href="/incident/{{ item.id }}/resolve">Resolve</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No incidents are recorded yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

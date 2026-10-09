@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}New Incident · ShopNode Service Desk{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>New Incident</h2>
+  <form method="post" action="/incident/new">
+    <input type="hidden" name="source_incident_id" id="source_incident_id" value="">
+    <label for="short_description">Short description</label>
+    <input id="short_description" name="short_description" required>
+    <div class="row">
+      <div>
+        <label for="category">Category</label>
+        <select id="category" name="category">
+          <option>Application</option>
+          <option>Database</option>
+          <option>Network</option>
+          <option>Infrastructure</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div>
+        <label for="priority">Priority</label>
+        <select id="priority" name="priority">
+          <option>1 - Critical</option>
+          <option>2 - High</option>
+          <option selected>3 - Moderate</option>
+          <option>4 - Low</option>
+        </select>
+      </div>
+    </div>
+    <label for="diagnosis">Diagnosis</label>
+    <textarea id="diagnosis" name="diagnosis"></textarea>
+    <label for="evidence">Evidence</label>
+    <textarea id="evidence" name="evidence"></textarea>
+    <label for="work_notes">Work notes</label>
+    <textarea id="work_notes" name="work_notes"></textarea>
+    <button id="submit" type="submit">Submit</button>
+    <a class="button" href="/incidents">Cancel</a>
+  </form>
+</section>
+{% endblock %}
